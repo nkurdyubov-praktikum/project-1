@@ -107,7 +107,38 @@ create table analysis.dm_rfm_segments
 Для решения предоставьте код запроса.
 
 ```SQL
---Впишите сюда ваш ответ
-
+insert into analysis.dm_rfm_segments (user_id, recency, frequency, monetary_value)
+with o as
+(select * from production.orders ord
+ left join production.orderstatuses os on os.id = ord.status
+ where os.key = 'Closed'
+ and ord.order_ts > '2021-01-01'), --Отбираем заказы со статусом Closed и с начала 2021г
+rfm as 
+ (select u.id as user_id, 
+  count(o.order_id) as orders_cnt,
+  now() - max(o.order_ts) as timediff,
+  max(o.order_ts),
+  sum(coalesce(o.payment, 0)) as total_sum --используется в таком виде тк по непонятной причине значения null попадают в 100й перцентиль
+  from production.users u
+  left join o on o.user_id = u.id
+  group by 1) --Формируем таблицу |юзер|кол-во заказов|времени с полседнего заказа|заплачено денег|
+select user_id, 
+ntile(5) OVER(order by timediff desc) as recency, --подходит для кластеризации по времени, т.к время непрерывно
+--ntile(5) OVER(order by orders_cnt asc),-- этот вариант отбросил, тк два юзера с одинаковым кол-вом заказов могут попасть в разные группы
+--cume_dist() OVER(order by orders_cnt asc), --этот столбец расчитывает перцентели значений и исопльзуется для кластеризации пользователей
+--по количеству заказов
+case when cume_dist() OVER(order by orders_cnt asc) <= 0.2 then 1
+     when cume_dist() OVER(order by orders_cnt asc) <= 0.4 then 2
+     when cume_dist() OVER(order by orders_cnt asc) <= 0.6 then 3
+     when cume_dist() OVER(order by orders_cnt asc) <= 0.8 then 4
+     else 5 end as frequency,
+--cume_dist() OVER(order by total_sum asc), --этот столбец расчитывает перцентели значений и исопльзуется для кластеризации пользователей
+--по потраченным деньгам
+case when cume_dist() OVER(order by total_sum asc) <= 0.2 then 1
+     when cume_dist() OVER(order by total_sum asc) <= 0.4 then 2
+     when cume_dist() OVER(order by total_sum asc) <= 0.6 then 3
+     when cume_dist() OVER(order by total_sum asc) <= 0.8 then 4
+     else 5 end as monetary_value
+from rfm
 
 ```
