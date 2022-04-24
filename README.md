@@ -1,7 +1,7 @@
 # project-1
 Самостоятельный проект первого скрипта
 # Витрина RFM
-
+# Задание 1
 ## 1.1. Выясните требования к целевой витрине.
 
 Постановка задачи выглядит достаточно абстрактно - постройте витрину. Первым делом вам необходимо выяснить у заказчика детали. Запросите недостающую информацию у заказчика в чате.
@@ -105,7 +105,30 @@ create table analysis.dm_rfm_segments
 Наконец, реализуйте расчет витрины на языке SQL и заполните таблицу, созданную в предыдущем пункте.
 
 Для решения предоставьте код запроса.
-
+### Это решение соглсано заданию (сегменты равны)
+```SQL
+insert into analysis.dm_rfm_segments (user_id, recency, frequency, monetary_value)
+with o as
+(select * from production.orders ord
+ left join production.orderstatuses os on os.id = ord.status
+ where os.key = 'Closed'
+ and ord.order_ts > '2021-01-01'), --Отбираем заказы со статусом Closed и с начала 2021г
+rfm as 
+ (select u.id as user_id, 
+  count(o.order_id) as orders_cnt,
+  now() - max(o.order_ts) as timediff,
+  max(o.order_ts),
+  sum(o.payment) as total_sum
+  from production.users u
+  left join o on o.user_id = u.id
+  group by 1) --Формируем таблицу |юзер|кол-во заказов|времени с полседнего заказа|заплачено денег|
+  select user_id, 
+ntile(5) OVER(order by timediff desc) as recency, --подходит для кластеризации по времени, т.к время непрерывно
+ntile(5) OVER(order by orders_cnt asc) as frequency,
+ntile(5) OVER(order by orders_cnt asc) as monetary_value
+from rfm
+```
+### Это решение которое я бы сделал
 ```SQL
 insert into analysis.dm_rfm_segments (user_id, recency, frequency, monetary_value)
 with o as
@@ -140,5 +163,26 @@ case when cume_dist() OVER(order by total_sum asc) <= 0.2 then 1
      when cume_dist() OVER(order by total_sum asc) <= 0.8 then 4
      else 5 end as monetary_value
 from rfm
+```
+# Задание 2
+Для того, чтобы ваш скрипт по расчету витрины продолжил работать, вам необходимо внести изменения в то, как формируется представление (view) analysis.Orders - вам необходимо вделать так, чтобы в этом представлении по-прежнему присутствовало поле status. Значение в этом поле должно соответствовать последнему (по времени) значению статуса из таблицы production.OrderStatusLog.
 
+Для проверки предоставьте код на языке SQL, выполняющий обновление представления analysis.Orders.
+```SQL
+CREATE OR REPLACE VIEW analysis.orders
+AS 
+with s as
+(select order_id, status_id , row_number() OVER(partition by order_id order by dttm desc) rn  
+from analysis.orderstatuslog) --Получаем для каждого заказа порядковый номер статуса в обратном поярдке (последний статус в строке 1)
+SELECT 
+    orders.order_id,
+    orders.order_ts,
+    orders.user_id,
+    orders.bonus_payment,
+    orders.payment,
+    orders.cost,
+    orders.bonus_grant,
+    s.status_id
+   FROM production.orders
+   left join s on s.order_id = orders.order_id and s.rn = 1 --джойним по строкам, у которых номер = 1 (соотв последнему статусу заказа);
 ```
